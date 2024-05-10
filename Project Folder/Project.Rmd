@@ -1,6 +1,6 @@
 ---
 title: "Modelling Creditability: A Bayesian Approach"
-author: "Quan Tran"
+author: "Anonymous"
 date: "January 2024"
 output: 
   pdf_document:
@@ -37,7 +37,8 @@ library(mgcv)
 library(posterior)
 library(bayesplot)
 library(bayestestR)
-library(ggpubr)
+library(cmdstanr)
+library(pROC)
 
 #For reproducibility
 set.seed(123)
@@ -221,9 +222,9 @@ data2$Value_Savings_Stocks <- relevel(data2$Value_Savings_Stocks, ref = "> 1000"
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
 # Standardize the data
-data2$Duration_of_Credit_monthly <- scale(data2$Duration_of_Credit_monthly)[,1]
-data2$Credit_Amount <- scale(data2$Credit_Amount)[,1]
-data2$Age_years <- scale(data2$Age_years)[,1]
+#data2$Duration_of_Credit_monthly <- scale(data2$Duration_of_Credit_monthly)[,1]
+#data2$Credit_Amount <- scale(data2$Credit_Amount)[,1]
+#data2$Age_years <- scale(data2$Age_years)[,1]
 ```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
@@ -236,7 +237,7 @@ test_data <- subset(data2, data_split == FALSE)
 
 # Introduction
 
-## Loan and Loan Process Explained 
+## Loan and Loan Process Explained
 
 A loan is essentially a sum of money or other assets given to a party with the expectation of repayment in the future. This includes repaying the original loan amount plus any accrued interest and finance charges. Loans vary in type, including personal, commercial, secured, and unsecured, and can be a one-time amount or an open-ended credit line within a specified limit.
 
@@ -244,26 +245,21 @@ Loans serve various purposes, such as purchasing goods, consolidating debt, fund
 
 When a bank receives a loan application, it has to decide whether to approve or reject the loan based on the applicant's profile. There are two types of risks associated with this decision: if the applicant is a good credit risk and is likely to repay the loan, then not approving the loan results in a loss of business to the bank; if the applicant is a bad credit risk and is not likely to repay the loan, then approving the loan results in a financial loss to the bank.
 
-## Motivation 
+## Central Credit Risk Management Problem and Motivation
 
-In the intricate world of financial behavior, creditability stands as a cornerstone, reflecting a myriad of socio-economic factors. Our investigation is underpinned by a sophisticated logistic regression model, meticulously crafted within a Bayesian framework. This methodological choice not only allows us to capture the nuanced interplay between individual predictors and creditability but also to discern the subtle yet significant influences exerted by occupational categories.
+The financial sector relies heavily on credit risk management, and banks and other lending organizations are always looking to improve their approaches. But it's easier said than done to achieve success in credit risk management given the plethora of obstacles that today's institution must overcome. One of the most notable problems is the lack of skilled personnel as credit risk management requires a team with diverse skills of risk assessment.
 
-As we navigate through this labyrinth of data, our analysis is not just about crunching numbers; it's a quest to uncover the hidden stories behind creditworthiness. Each statistical insight offers a deeper understanding of the financial fabric that binds individuals and occupations, providing valuable perspectives for both risk assessment and strategic financial planning.
+Therefore, it is an urgent task to automate the process of detecting bad creditability to minimize risk and maximize return. This can be accomplished through various techniques of Machine Learning. In this report, I aim to detect bad creditability based on numerous features which are the factors that a lender can analyze about a borrower. This project will follow a Bayesian workflow approach to inject some prior knowledge from previous beliefs/researches and account for the uncertainty of the result.
 
 ## Outline
 
-The report consists of the following parts: Introduction, Data Description, Models, Results, Discussion,
-Conclusion, and Appendices. First, we will formulate the problem and do some explanatory variable analysis on the train data. Subsequently, in the Models section, we present two BRMS models, one pooled and one hierarchical, and justify their priors. Next, we analyze the stability of the models through some convergence diagnostics and prior sensitivity analysis, evaluate the predictive performance through posterior predictive checks and assessments, and then compare the two models. Finally, in the Conclusion section, we will summarize this project by concluding the performance and pointing out the issues and potential improvements. You can find the complete repository for the project [here]()
+The report consists of the following parts: Introduction, Data Description, Models, Results, Discussion, Conclusion, and Appendices. First, we will formulate the problem and do some exploratory data analysis on the train data. Subsequently, in the Models section, we present two BRMS models, one pooled and one hierarchical, and justify their priors. Next, we analyze the stability of the models through some convergence diagnostics and prior sensitivity analysis, evaluate the predictive performance through posterior predictive checks and assessments, and then compare the two models. Finally, in the Conclusion section, we will summarize this project by concluding the performance and pointing out the issues and potential improvements. You can find the complete repository for the project [here](https://github.com/quan22022003/Modelling-Creditability-A-Bayesian-Approach)
 
 # Data and Analysis Problem
 
 ## Dataset and Data Preprocessing
 
-The German Credit Data was obtained from the [Kaggle website](https://www.kaggle.com/datasets/mpwolke/cusersmarildownloadsgermancsv/data). The data contains data 20 explanatory variables and 1 response variable, which is the classification whether an applicant is considered a Good or a Bad credit risk, for 1000 loan applicants. 
-
-Subsequently, we standardized the numerical variables in order to minimize the posterior dependency as the values are for from zero. The input explanatory numerical variables are on different scales so standardization is appropriate in this context.
-
-Finally, we split 70% of the dataset into training dataset and 30% into testing dataset. While the training set is used for the explanatory data analysis and model fitting, the test set is utilized for predictions and accuracy testing purposes.
+The German Credit Data was obtained from the [Kaggle website](https://www.kaggle.com/datasets/mpwolke/cusersmarildownloadsgermancsv/data). The data contains data 20 explanatory variables and 1 response variable, which is the classification whether an applicant is considered a Good or a Bad credit risk, for 1000 loan applicants. According to the author, this dataset comprises of these extracted attributes of borrowers:
 
 ```{r echo=FALSE, out.width='70%', out.length='85%', fig.align='center'}
 knitr::include_graphics('resources/dataset.png')
@@ -271,9 +267,9 @@ knitr::include_graphics('resources/dataset.png')
 
 Response variable:
 
-- `Creditability`: The indicator whether the subject has repaid the loan. The values is `1` if the subject repaid on time and is `0` if the subject has defaulted.
+-   `Creditability`: The indicator whether the subject has repaid the loan. The values is `1` if the subject repaid on time and is `0` if the subject has defaulted.
 
-## Explanatory Data Analysis
+## Exploratory Data Analysis
 
 Plotting the histograms for the features that correspond to the response variable from the training dataset, we can gain insights into the correlation between the explanatory variables and the response variable.
 
@@ -281,6 +277,7 @@ Plotting the histograms for the features that correspond to the response variabl
 
 account_balance_plot <- ggplot(train_data, aes(x = Account_Balance, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Account Balance by Creditability", 
        x = "Account Balance", 
        fill = "Creditability") +
@@ -290,6 +287,7 @@ account_balance_plot <- ggplot(train_data, aes(x = Account_Balance, fill = as.fa
         title = element_text(size=28.5), legend.text=element_text(size=33.5), legend.title=element_text(size=33.5))
 
 previous_credit_plot <- ggplot(train_data, aes(x = Payment_Status_of_Previous_Credit, fill = as.factor(Creditability))) +  geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Payment Status of Previous Credit by Creditability", 
        x = "Status", 
        fill = "Creditability") +
@@ -300,6 +298,7 @@ previous_credit_plot <- ggplot(train_data, aes(x = Payment_Status_of_Previous_Cr
 
 purpose_plot <- ggplot(train_data, aes(x = Purpose, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Purpose by Creditability", 
        x = "Purpose", 
        fill = "Creditability") +
@@ -310,6 +309,7 @@ purpose_plot <- ggplot(train_data, aes(x = Purpose, fill = as.factor(Creditabili
 
 savings_stocks_plot <- ggplot(train_data, aes(x = Value_Savings_Stocks, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Value of Savings and Stocks by Creditability", 
        x = "Value", 
        fill = "Creditability") +
@@ -320,6 +320,7 @@ savings_stocks_plot <- ggplot(train_data, aes(x = Value_Savings_Stocks, fill = a
 
 curr_empl_plot <- ggplot(train_data, aes(x = Length_of_current_employment, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Length of Current Employment by Creditability", 
        x = "Year", 
        fill = "Creditability") +
@@ -330,6 +331,7 @@ curr_empl_plot <- ggplot(train_data, aes(x = Length_of_current_employment, fill 
 
 sex_marital_plot <- ggplot(train_data, aes(x = Sex_Marital_Status, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Sex and Marital Status by Creditability", 
        x = "Sex and Marital Status", 
        fill = "Creditability") +
@@ -340,6 +342,7 @@ sex_marital_plot <- ggplot(train_data, aes(x = Sex_Marital_Status, fill = as.fac
 
 guarantor_plot <- ggplot(train_data, aes(x = Guarantors, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Guarantor by Creditability", 
        x = "Guarantor", 
        fill = "Creditability") +
@@ -350,6 +353,7 @@ guarantor_plot <- ggplot(train_data, aes(x = Guarantors, fill = as.factor(Credit
 
 asset_plot <- ggplot(train_data, aes(x = Most_valuable_available_asset, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Most Valuable Available Asset by Creditability", 
        x = "Asset", 
        fill = "Creditability") +
@@ -360,8 +364,9 @@ asset_plot <- ggplot(train_data, aes(x = Most_valuable_available_asset, fill = a
 
 worker_plot <- ggplot(train_data, aes(x = Foreign_Worker, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Foreign Workers by Creditability", 
-       x = "Worker", 
+       x = " Foreign Worker", 
        fill = "Creditability") +
   theme_minimal() + guides(fill="none") + 
   theme(axis.text=element_text(size=30.5),
@@ -370,6 +375,7 @@ worker_plot <- ggplot(train_data, aes(x = Foreign_Worker, fill = as.factor(Credi
 
 concurr_credits_plot <- ggplot(train_data, aes(x = Concurrent_Credits, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Concurrent Credits by Creditability", 
        x = "Concurrent Credits", 
        fill = "Creditability") +
@@ -380,6 +386,7 @@ concurr_credits_plot <- ggplot(train_data, aes(x = Concurrent_Credits, fill = as
 
 apartment_type_plot <- ggplot(train_data, aes(x = Type_of_apartment, fill = as.factor(Creditability))) +
   geom_bar(position = "dodge") +
+  geom_text(stat = "count", aes(label = ..count..), position = position_dodge(width = 0.9), vjust = -0.5, size = 6.5) +
   labs(title = "Apartment Types by Creditability", 
        x = "Type", 
        fill = "Creditability") +
@@ -399,19 +406,66 @@ ggarrange(worker_plot, curr_empl_plot, ncol=2)
 purpose_plot
 ```
 
-There is one noticeable concern that can be readily pointed out from the histograms: There are under-representation of many classes in various predictor variables, including `Foreign_Worker`, `Concurrent_Credits`, `Guarantor`. For example, for the variable `Foreign_Worker`, there are 678 foreign workers, while there are only 22 natives.
+There is one noticeable concern that can be readily pointed out from the histograms: There are under-representation of many classes in various predictor variables, including `Foreign_Worker`, `Concurrent_Credits`, `Guarantor`. For example, for the variable `Foreign_Worker`, there are 678 foreign workers, while there are only 24 natives.
 
-## Feature Engineering and Data Processing
+Finally, the fearutes left are the numerical features `Duration_of_Credit_monthly`, `Credit_Amount`, and `Age_years`. We plot the pairwise scatter plots to detect any interesting patterns from the data.
 
-We can examine the dependency of the response variable on explanatory variables using Chi-Square Test for categorical variables and Correlation Matrix for continuous variables, from which we can determine the final explanatory variables for the models.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# Selecting only the numerical variables and the response variable
+numeric_vars <- c("Duration_of_Credit_monthly", "Credit_Amount", "Age_years", 
+                  "Creditability")
+numeric_data <- train_data[, numeric_vars]
+numeric_data$Creditability <- as.factor(numeric_data$Creditability)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide', fig.align='center'}
+pairs(numeric_data[, 1:3], pch = c(16,17)[numeric_data$Creditability], gap=0, upper.panel = NULL, col=c(rgb(0, 0, 1, 0.5), rgb(1, 0, 0, 0.5))[numeric_data$Creditability])
+par(xpd=TRUE)
+legend(0.75, 0.75, legend = levels(numeric_data$Creditability), pch = c(16, 17), col = c(rgb(0, 0, 1, 0.5), rgb(1, 0, 0, 0.5)), cex = 1)
+```
+
+As shown from the figure, it seems like there are no significant patterns from the numerical features that we can notice with just visualizations.
+
+To further inspect the correlation between these features, we calculation the Pearson's correlation coefficients for each pair of features.
+
+```{r, fig.align='center', echo=FALSE, message=FALSE, warning=FALSE, out.width='55%', out.length='80%'}
+# Calculate the correlation matrix
+numeric_data$Creditability <- as.numeric(numeric_data$Creditability)
+correlation_matrix <- cor(numeric_data)
+
+# We will use 'melt' from reshape2 to transform the data for ggplot
+melted_correlation <- melt(correlation_matrix)
+
+# Plotting the heatmap with labels
+ggplot(melted_correlation, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 3) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal() +
+  coord_fixed() +
+  labs(x = "", y = "", title = "Correlation Heatmap of Numerical Variables with
+       Risk Flag") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        axis.text.y = element_text(angle = 45, vjust = 1, hjust=1))
+
+```
+
+From the correlation plot, it can be observed that there is some correlation between `Credit_Amount` and `Duration_of_Credit_monthly`. The effects of multicollinearity can be severe for ordinary logistics regression, but that does not hold for Bayesian Logistics Regression. Therefore, there is not much wariness about this matter in this modelling problem.
+
+## Data Processing and Feature Selection
+
+First of all, we split 70% of the dataset into training dataset and 30% into testing dataset. While the training set is used for the explanatory data analysis and model fitting, the test set is utilized for predictions and accuracy testing purposes.
+
+The next step in this workflow is feature selection, which is crucial to dimension reduction, model performance, and runtime improvement. Therefore, as this dataset contains numerous categorical variables, we only choose a subset of them as explanatory variables for the models. By analyzing the relationship between the response variable and the explanatory variables using the Chi-Square Test for categorical variables, we can identify the final set of explanatory variables for the models by selecting those whose Chi-Square tests show significant associations.
 
 ### Chi-Square Test:
 
-- **Hypotheses**:
-  - Null Hypothesis (H0): There is no association between the predictor variable and target variable.
-  - Alternate Hypothesis (H1): There is a significant association between the the predictor variable and target variable.
-- **Significance level ($\alpha$)**: ($\alpha$) = 0.05.
-
+-   **Hypotheses**:
+    -   Null Hypothesis (H0): There is no association between the predictor variable and target variable.
+    -   Alternate Hypothesis (H1): There is a significant association between the the predictor variable and target variable.
+-   **Significance level (**$\alpha$): ($\alpha$) = 0.05.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
 # Define a list to store the results
@@ -430,7 +484,7 @@ categorical_predictors <- c("Instalment_per_cent", "Duration_in_Current_address"
 # Loop through each predictor and perform the Chi-square test
 for(predictor in categorical_predictors) {
   # Create contingency table
-  contingency_table <- table(data2[[predictor]], data2$Creditability)
+  contingency_table <- table(train_data[[predictor]], train_data$Creditability)
   
   # Perform the Chi-square test
   test_result <- chisq.test(contingency_table)
@@ -452,117 +506,65 @@ knitr::include_graphics('resources/chi_square_tests.png')
 
 From the result table, we conclude that `Instalment_per_cent`, `Duration_in_Current_Address`, `No_of_Credits_at_this_Bank`, `Occupation`, `No_of_dependents`, and `Telephone` do not show a statistically significant association with the response variable `Creditability`. This outcome indicates that, based on our Chi-square analysis, these factors may not be critical predictors for `Creditability` in the context of this dataset.
 
-### Correlation Matrix
-
-```{r, fig.align='center', echo=FALSE, message=FALSE, warning=FALSE, out.width='55%', out.length='80%'}
-# Assuming your data frame is named 'data2'
-# Selecting only the numerical variables and the response variable
-numeric_vars <- c("Duration_of_Credit_monthly", "Credit_Amount", "Age_years", 
-                  "Creditability")
-numeric_data <- data2[, numeric_vars]
-
-# Calculate the correlation matrix
-correlation_matrix <- cor(numeric_data)
-
-# We will use 'melt' from reshape2 to transform the data for ggplot
-melted_correlation <- melt(correlation_matrix)
-
-# Plotting the heatmap with labels
-ggplot(melted_correlation, aes(Var1, Var2, fill = value)) +
-  geom_tile() +
-  geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 3) +
-  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-                       midpoint = 0, limit = c(-1,1), space = "Lab", 
-                       name="Pearson\nCorrelation") +
-  theme_minimal() +
-  coord_fixed() +
-  labs(x = "", y = "", title = "Correlation Heatmap of Numerical Variables with
-       Risk Flag") +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
-        axis.text.y = element_text(angle = 45, vjust = 1, hjust=1))
-
-```
-From the correlation plot, it can be observed that there is some correlation between `Credit_Amount` and `Duration_of_Credit_monthly`. The effects of multicollinearity can be severe. For example, it can cause the coefficient estimates to be unstable and sensitive to small changes in the model. This means that the coefficients can swing wildly based on which other independent variables are in the model. Multicollinearity can also make it difficult for the model to estimate the relationship between each independent variable and the dependent variable independently because the independent variables tend to change in unison. [Jim Frost et al. 2017](#references)
-
-One of the methods to deal with multicollinearity is to linearly combine the features `Credit_Amount` and `Duration_of_Credit_monthly` by Principal Component Analysis (PCA). PCA is a technique transforming the two original variables into a new set of variables called principal components, which are the linear combinations of the original variables. Each component is orthogonal to the others.
-
-```{r echo=FALSE, out.width='50%', out.length='70%', fig.align='center'}
-knitr::include_graphics('resources/PCA.png')
-```
-
-```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
-# Select features for PCA
-PCA_features <- train_data[, c("Credit_Amount", "Duration_of_Credit_monthly")]
-
-# Apply PCA on the selected features
-PCA_result <- prcomp(PCA_features, center=TRUE, scale.=TRUE, retx = TRUE, rank. = 2)
-
-# Adding PCA component to training data
-train_data$PCA1 <- PCA_result$x[,1]
-train_data$PCA2 <- PCA_result$x[,2]
-```
-
-```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
-# Drop some features
-train_data$Credit_Amount <- NULL
-train_data$Duration_of_Credit_monthly <- NULL
-```
-
-From the above table, we can observe that the first component has already explained 81% of the total variance. It is reasonable to use this principal component as a feature instead of `Credit_Amount` and `Duration_of_Credit_monthly` and call it `PCA1`.
-
 # Models Description
 
-In this project, two models will be used and analyzed: a Pooled model and a Hierarchical model. For the statistical model, Logistic Regression is chosen as the project aims to classify a binary outcome (Good Creditability: “1”, Bad Creditability: “0”). 
+In this project, two models will be used and analyzed: a Pooled model and a Hierarchical model. For the statistical model, Logistic Regression is chosen as the project aims to classify a binary outcome (Good Creditability: “1”, Bad Creditability: “0”).
 
 **Mathematical Expression for Both Models**
 
 The Logistic Regression model used to classify creditability y can be expressed as follows:
 
-\[
+$$
 \begin{aligned}
-\Pr[Y_i = y | x_{1,i}, \ldots, x_{m,i}] = 
+\pi = \Pr[Y_i = y | x_{1,i}, \ldots, x_{m,i}] = 
 \begin{cases} 
     \frac{1}{1 + e^{-LP_i}}, & \text{if } y = 1 \\
     -\frac{1}{1 + e^{LP_i}}, & \text{if } y = 0 
 \end{cases}
 \end{aligned}
-\]
+$$
 
 where the linear predictor $LP_{i}$ is the weighted sum of the independent variables, representing the log-odds of an observation $\textit{i}$ for our Bernoulli-distributed random variable $Y_{i}$
 
 $$ LP_{i} = \boldsymbol{\beta} \cdot \mathbf{X}_{i} $$
 
-with $\boldsymbol{\beta} \in \mathbb{R}^{m+1}$ is the vector of the regression coefficients. $\mathbf{X}_{i}\in \mathbb{R}^{m+1}$ are the explanatory variables indexed by $\textit{i}$. Then we can logit transform the first function to obtain the linear predictors:
+with $\boldsymbol{\beta} \in \mathbb{R}^{m+1}$ is the vector of the regression coefficients, and $\mathbf{X}_{i}\in \mathbb{R}^{m+1}$ are the explanatory variables indexed by $\textit{i}$ for m predictors. In practical terms, parameters $\boldsymbol{\beta}$ will estimate the change in the log-odds of the outcome when the variable changes from its reference level (usually 0) to the other level for categorical variables, or the change in the log-odds of the outcome for continuous numerical variables.
+
+With the logit (log-odds) link function $g(\pi)$ = $\ln \left( \frac{\pi}{1-\pi} \right)$ we can logit-transform the first function to obtain the linear predictors:
 
 $$ 
 \begin{aligned}
-logit(Pr[Y_{i}=y]) = \boldsymbol{\beta} \cdot \mathbf{X}_{i} \\
-log(\frac{Pr[Y_{i}=y]}{1-Pr[Y_{i}=y]})= \boldsymbol{\beta} \cdot \mathbf{X}_{i}
+&\text{logit}(\pi) = \boldsymbol{\beta} \cdot \mathbf{X}_{i} \\
+\Leftrightarrow &\log \left(\frac{Pr[Y_{i}=y]}{1-Pr[Y_{i}=y]}\right)= \boldsymbol{\beta} \cdot \mathbf{X}_{i}
 \end{aligned}
 $$
 
-then the likelihood is
+And with the probit link function $g(x)$ = $\Phi^{-1}(x)$ yields the likelihood for a single observation
 
 $$ 
-y_i \sim Bernoulli[log(\frac{Pr[Y_{i}=y]}{1-Pr[Y_{i}=y]})]
-$$
+y_i \sim \text{Bernoulli} \left[ \Phi(\boldsymbol{\beta} \cdot \mathbf{X}_{i})  \right]
+$$ If independent prior distributions are adopted, the joint posterior distribution for $\boldsymbol{\beta}$ is proportional to the product of the priors and the $\mathcal{N}$ likelihood:
 
-In practical terms, parameters $\boldsymbol{\beta}$ will estimate the change in the log-odds of the outcome when the variable changes from its reference level (usually 0) to the other level for categorical variables, or the change in the log-odds of the outcome for continuous numerical variables.
+$$
+f(\boldsymbol{\beta} \mid \boldsymbol{y}, \boldsymbol{X}) \propto \prod_{i=0}^m f(\beta_k) \times \prod_{j=1}^\mathcal{N} f(y_j)
+$$
 
 ## Pooled Logistic Regression Model
 
-For the Pooled Logistic Regression Model, we will use the following features: `Account_Balance`, `Payment_Status_of_Previous_Credit`, `Purpose`, `Value_Savings_Stocks`, `Length_of_current_employment`, `Sex_Marital_Status`, `Guarantors`, `Most_valuable_available_asset`, `Concurrent_Credits`, `Type_of_apartment`, `PCA1`, `Age_years`. You can inspect the BRMS code for the model [here](#pooled).
+For the Pooled Logistic Regression Model, we will use the following features: `Account_Balance`, `Payment_Status_of_Previous_Credit`, `Purpose`, `Value_Savings_Stocks`, `Length_of_current_employment`, `Sex_Marital_Status`, `Guarantors`, `Most_valuable_available_asset`, `Concurrent_Credits`, `Type_of_apartment`, `Credit_Amount`, `Duration_of_Credit_monthly`, `Age_years`. You can inspect the BRMS code for the model [here](#pooled).
 
 ### Priors Justification
 
-For the $\beta$ coefficients, a common choice is to use normal distributions as priors due to their mathematical convenience and the central limit theorem. For example, $\beta_i \sim \mathcal{N}(0, \sigma^2)$, where $\sigma^2$ is the variance for most of the parameters. In this project, we will choose 0 as location parameter and 1 as the variance for most of the parameters, expressing our humble prior knowledge about how the input variables can affect the target variable.
+For the $\beta$ coefficients, a common choice is to use normal distributions as priors due to their mathematical convenience and the central limit theorem. For example, $\beta_i \sim \mathcal{N}(0, \sigma^2)$, where $\sigma^2$ is the variance for most of the parameters. In this project, we will choose 0 as location parameter and 10 as the variance for most of the parameters, expressing our humble prior knowledge about how the input variables can affect the target variable.
 
-$$ \beta_j \sim \mathcal{N}(0, 1) \forall j \in \{1, 2, 3, \ldots, k\}$$
+$$ 
+\beta_j \sim \mathcal{N}(0, 10) \text{ } \forall j \in \{1, 2, 3, \ldots, k\} \setminus \{\text{Account Balance}, \text{Value Saving Stocks}\}
+$$
 
 However, for the variables `Account_Balance` and `Value_Savings_Stocks`, we assume a informative prior:
 
 $$
-\beta_{Account Balance}, \beta_{Value Saving Stocks} \sim \mathcal{N}(-1.5, 0.5)
+\beta_{\text{Account Balance}}, \beta_{\text{Value Saving Stocks}} \sim \mathcal{N}(-1.5, 0.5)
 $$
 
 The justification for our choice of this prior follows. According to [Treece, K. et al. (2023)](#references), capital, representation of the commitment to contribute some of the borrower's own funds, is taken into account by the lenders. For the variable Account_Balance, the baseline category is the one having highest value (`> 1000`). Similarly, for the variable Value_Savings_Stocks, the baseline category is also the category has highest value (`>= 200 DM or 1+ year account`). Therefore, it is reasonable to assume that the log-odds of creditability decreases when these variables' values move from the baseline categories to the other categories.
@@ -570,8 +572,8 @@ The justification for our choice of this prior follows. According to [Treece, K.
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 # Priors
 priors_model1 <- c(
-  prior(normal(0, 1), class = "b"), 
-  prior(normal(0, 1), class = "Intercept"),
+  prior(normal(0, 10), class = "b"), 
+  prior(normal(0, 10), class = "Intercept"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_Balance0M200DM"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoaccount"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoBalanceorDebit"),
@@ -584,10 +586,14 @@ priors_model1 <- c(
 model1form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
                    Purpose + Value_Savings_Stocks + Length_of_current_employment + 
                    Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-                   Concurrent_Credits + Type_of_apartment + PCA1 + Age_years)
+                   Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years)
 ```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
+if (!dir.exists("cache")) {
+  dir.create("cache")
+}
+
 model1 <- brm(
   # Specify the formula used
   model1form, 
@@ -600,16 +606,15 @@ model1 <- brm(
   # Specify the number of chains used in the MCMC algorithm
   chains=4,
   # Specify the number of total draws and warm-up draws
-  iter=4000, 
-  warmup=1000, 
+  iter=4000,
   # Cache the result
-  file="cache/model1",
+  file = file.path("cache", "model1"),
   # Declare the backend used
   backend="cmdstanr",
+  warmup=1000, 
   # Specify the number of CPU cores used
   cores=8)
 ```
-
 
 ## Hierarchical Logistic Regression Model
 
@@ -617,13 +622,15 @@ For the Hierarchical Logistic Regression Model, we will use the same features as
 
 Let G: D $\to$ G is a surjective mapping from the set of datapoints D to the set of categories G of variable `Occupation`. Then we have the following Linear Predictor $LP_{i}$:
 
-$$ LP_{i} = \boldsymbol{\beta_0} + \mathbf{X}_i \boldsymbol{\beta} + \mathbf{Z}_i \boldsymbol{u}_{G(i)} $$
+$$ 
+LP_{i} = \boldsymbol{\beta_0} + \mathbf{X}_i \boldsymbol{\beta} + \mathbf{Z}_i \boldsymbol{u}_{G(i)} 
+$$
 
-- $\alpha$: The global intercept (Intercept).
-- $\mathbf{X}_i$: The vector of predictor values for observation $i$.
-- $\boldsymbol{\beta}$: The vector of fixed-effects coefficients (class "b").
-- $\mathbf{Z}_i$: The vector of group-level predictor values for observation $i$.
-- $\boldsymbol{u}_{G(i)}$: The vector of random effects for group $G(i)$.
+-   $\alpha$: The global intercept (Intercept).
+-   $\mathbf{X}_i$: The vector of predictor values for observation $i$.
+-   $\boldsymbol{\beta}$: The vector of fixed-effects coefficients (class "b").
+-   $\mathbf{Z}_i$: The vector of group-level predictor values for observation $i$.
+-   $\boldsymbol{u}_{G(i)}$: The vector of random effects for group $G(i)$.
 
 You can inspect the BRMS code for the model [here](#hierarchical).
 
@@ -631,8 +638,8 @@ You can inspect the BRMS code for the model [here](#hierarchical).
 # Declare priors for the Hierarchiccal model
 # Priors for non-grouped parameters
 non_grouped_priors_model2 <- c(
-  prior(normal(0, 1), class = "b"), 
-  prior(normal(0, 1), class = "Intercept"),
+  prior(normal(0, 10), class = "b"), 
+  prior(normal(0, 10), class = "Intercept"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_Balance0M200DM"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoaccount"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoBalanceorDebit"),
@@ -657,12 +664,11 @@ priors_model2 <- c(non_grouped_priors_model2, grouped_priors_model2)
 model2form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
           Purpose + Value_Savings_Stocks + Length_of_current_employment + 
           Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-          Concurrent_Credits + Type_of_apartment + PCA1 + Age_years + 
+          Concurrent_Credits + Type_of_apartment +  Duration_of_Credit_monthly + Credit_Amount + Age_years + 
           (1 + Length_of_current_employment + Account_Balance + 
           Payment_Status_of_Previous_Credit | Occupation))
 
 ```
-
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 model2 <- brm(
@@ -680,18 +686,19 @@ model2 <- brm(
   iter=4000, warmup=1000, 
   # Cache the result             
   file="cache/model2",
-  # Declare the backend used             
+  # Declare the backend used
   backend="cmdstanr",
   # Specify the number of CPU cores used             
   cores=8)
 ```
+
 ### Priors Justification
 
-For fixed effects (`class="b"`), we use the same set of priors for the coefficients of predictors 
-$$ \beta_j \sim \mathcal{N}(0, 1), \forall j \in \{0, 1, 2, 3, \ldots, k\}$$
-The logical reasoning remains the same.
+For fixed effects (`class="b"`), we use the same set of priors for the coefficients of predictors $$ 
+\beta_j \sim \mathcal{N}(0, 10) \text{ } \forall j \in \{1, 2, 3, \ldots, k\} \setminus \{\text{Account Balance}, \text{Value Saving Stocks}\}
+$$ The logical reasoning for prior choice remains the same as for pooled model.
 
-For Random Effects Standard Deviations (`class = "sd"`), we use a weakly informative Cauchy priors $$\sigma_{\text{Occupation}} \sim \text{Cauchy}(0, 2)$$. 
+For Random Effects Standard Deviations (`class = "sd"`), we use a weakly informative Cauchy priors $$\sigma_{\text{Occupation}} \sim \text{Cauchy}(0, 2)$$.
 
 For Correlation (`class = "cor"`), we use LKJ prior for the correlation matrix of random slopes within each `Occupation`
 
@@ -720,7 +727,7 @@ rhat_model2 <- mcmc_rhat_hist(r_hat_model2) +
 ggarrange(rhat_model1, rhat_model2, ncol=2, common.legend=TRUE)
 ```
 
-From the histograms, we can observe that the all $\hat{R}$ values are smaller than 1.05. This suggests that the  good convergence across chains.
+From the histograms, we can observe that the all $\hat{R}$ values are smaller than 1.05. This suggests that the good convergence across chains.
 
 ### Divergences Diagnostics
 
@@ -757,11 +764,12 @@ divergent_draws <- function(model, name) {
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, comment=""}
 divergent_draws(model1, "Pooled")
 ```
+
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, comment=""}
 divergent_draws(model2, "Hierarchical")
 ```
 
-For the pooled model, we have 0 divergent transitions. However, on the contrary, hierarchical model has $\sim$ 50 divergent transitions. While this number should not be ignored, occasional divergences might not significantly impact the overall inference, considering the huge number of total draws of 12000.
+For the pooled model, we have 0 divergent transitions. However, on the contrary, hierarchical model has $\sim$ 1 divergent transitions. While this number should not be ignored, occasional divergences might not significantly impact the overall inference, considering the huge number of total draws of 12000.
 
 ### Effective Sample Size (ESS) diagnostics
 
@@ -811,18 +819,9 @@ Therefore, we are confident in the reliability of our model's results. The diagn
 
 ### Posterior Predictive Performance Checks
 
-The following plot displays the observed frequencies of the response variable in the data to the frequencies simulated from the model. It's particularly useful for categorical data in this context. The bars show the distribution of creditability (by count) and the predicted number of each category (`Good` or `Bad`) from the model, with the median as a dot and error bar. 
+The following plot displays the observed frequencies of the response variable in the data to the frequencies simulated from the model. It's particularly useful for categorical data in this context. The bars show the distribution of creditability (by count) and the predicted number of each category (`Good` or `Bad`) from the model, with the median as a dot and error bar.
 
 Ideally, the observed and simulated data should be similar. If the models fit the data well, the bars for the observed data should fall within the range of variation of the bars for the simulated data.
-
-```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
-# Applying PCA transformation to test data
-test_data$PCA1 <- predict(PCA_result, newdata=test_data[, c("Credit_Amount", 
-                                            "Duration_of_Credit_monthly")])[,1]
-test_data$PCA2 <- predict(PCA_result, newdata=test_data[, c("Credit_Amount",
-                                            "Duration_of_Credit_monthly")])[,2]
-
-```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE,out.width='70%', fig.align='center'}
 model1_bars <- pp_check(model1, type="bars", newdata=test_data)  + 
@@ -852,7 +851,7 @@ model2_stat <- pp_check(model2, type="stat", newdata=test_data)  +
 ggarrange(model1_stat, model2_stat, ncol=2, common.legend=TRUE, legend="right")
 ```
 
-Upon examining our PPC plots, we observe a commendable alignment in the central tendencies between the observed and simulated data, suggesting that our model effectively captures the primary patterns in the creditability data. However, notable discrepancies in the tails of the distribution indicate potential underestimation of extreme values. This could imply model misspecification, perhaps due to not fully accounting for high-risk profiles in the data.
+Upon examining our PPC plots, we observe a commendable alignment in the central tendencies between the observed and simulated data as the modes of the predictive posterior distribution really near the true mean, suggesting that our model effectively captures the primary patterns in the creditability data. However, notable discrepancies in the tails of the distribution indicate potential underestimation of extreme values. This could imply model misspecification, perhaps due to not fully accounting for high-risk profiles in the data.
 
 Further, the underrepresentation of certain creditability outcomes in the simulated data suggests that incorporating additional predictors or exploring interaction effects could enhance our model's accuracy. For instance, incorporating economic indicators might improve the model's ability to capture these tail behaviors.
 
@@ -878,7 +877,6 @@ predicted_classes <- function(model, data, hierarchical=FALSE) {
 }
 ```
 
-
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide', comment=""}
 # For pooled model:
 predicted_classes_model1 <- predicted_classes(model1, test_data)
@@ -886,7 +884,6 @@ predicted_classes_model1 <- predicted_classes(model1, test_data)
 # For hierarchical model:
 predicted_classes_model2 <-  predicted_classes(model2, test_data)
 ```
-
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
 confusion_matrix <- function(predictions, actual) {
@@ -903,7 +900,6 @@ confusion_matrix <- function(predictions, actual) {
                        c("Actual False", "Actual True")))
 }
 ```
-
 
 **The Confusion Matrix:**
 
@@ -930,12 +926,11 @@ Then we will evaluate the classification accuracy of both models using some of t
 
 -   **Precision**: Precision is the ratio of correctly predicted positive observations to the total predicted positive observations. It's a measure of a classifier's exactness. High precision relates to a low rate of false positives, and it is particularly important in cases where the cost of a false positive is high.
 
--   **Specificity**:  Specificity measures the proportion of actual negatives that are correctly identified as such (e.g., the percentage of non-creditworthy individuals who are correctly identified by the model).
+-   **Specificity**: Specificity measures the proportion of actual negatives that are correctly identified as such (e.g., the percentage of non-creditworthy individuals who are correctly identified by the model).
 
 -   **Recall (or Sensitivity)**: Recall is the ratio of correctly predicted positive observations to all observations in the actual class. It's a measure of a classifier's completeness. High recall relates to a low rate of false negatives, and it is important in cases where the cost of a false negative is high.
 
 -   **F1 Score**: The F1 Score is the weighted average of Precision and Recall. It's a measure of a test's accuracy and considers both the precision and the recall. This is useful when seeking a balance between Precision and Recall, especially if there is an uneven class distribution.
-
 
 ```{r, echo=FALSE}
 predictive_metrics <- function(conf_matrix, model) {
@@ -964,7 +959,70 @@ predictive_metrics(conf_matrix_model2, "Hierarchical")
 
 From the metrics obtained, it is apparent that there is no considerable differences between the two models. However, the Hierarchical model is performing strictly better in some aspects.
 
-The two metrics we would be focus on are Precision and Specificity. Since the cost false positivity is high (the loss of lending who would default eventually outweigh the profit gained), the Precision and Specificity metrics are appropriate since they put emphasis on classifier's exactness. Even if the two models have quite good Precision scores (0.8 and 0.81 for Pooled model and Hierarchical model respectively), the Specificity scores are quite humble (0.51 and 0.53 for Pooled model and Hierarchical model respectively). Therefore, these models should be refined before deployed in practical use.
+The two metrics we would be focus on are Precision and Specificity. Since the cost of false positivity is high (the loss of lending who would default eventually outweigh the profit gained), the Precision and Specificity metrics are appropriate since they put emphasis on classifier's exactness. Even if the two models have quite good Precision scores (0.8 and 0.81 for Pooled model and Hierarchical model respectively), the Specificity scores are quite humble (0.50 and 0.52 for Pooled model and Hierarchical model respectively). Therefore, these models should be refined before deployed in practical use.
+
+Subsequently, we plot two ROC curves, one for each model to further inspect their predictive performance. The ROC curve, which stands for Receiver Operating Characteristic curve, is a graphical representation used to evaluate the performance of a binary classification model. These are some key points of the ROC Curve:
+
+-   Diagonal Line (Baseline): Represents a random guess where the TPR equals the FPR.
+
+-   Curve Interpretation: The curve is generated by plotting TPR against FPR at various threshold levels. A curve closer to the upper-left corner indicates a better performance.
+
+-   Area Under the Curve (AUC): Numerical measure of the ROC curve performance. Values range from 0 to 1:
+
+    -   1.0: Perfect classifier.
+    -   0.5: Random guess (e.g., flipping a coin).
+    -   Less than 0.5: Worse than a random guess.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width='70%', fig.align='center'}
+# Generate predictions for Model 1
+predictions_model1 <- posterior_linpred(model1, newdata = test_data, transform = TRUE)
+mean_predictions_model1 <- apply(predictions_model1, 2, mean)
+
+# Generate predictions for Model 2
+predictions_model2 <- posterior_linpred(model2, newdata = test_data, transform = TRUE)
+mean_predictions_model2 <- apply(predictions_model2, 2, mean)
+
+# Create ROC curves
+roc_model1 <- roc(test_data$Creditability, mean_predictions_model1)
+roc_model2 <- roc(test_data$Creditability, mean_predictions_model2)
+
+# Extract AUC values
+auc_model1 <- auc(roc_model1)
+auc_model2 <- auc(roc_model2)
+
+# Create data frames for ggplot
+roc_data1 <- data.frame(
+  TPR = roc_model1$sensitivities,
+  FPR = 1 - roc_model1$specificities,
+  Model = sprintf("Model 1 (AUC = %.2f)", auc_model1)
+)
+
+roc_data2 <- data.frame(
+  TPR = roc_model2$sensitivities,
+  FPR = 1 - roc_model2$specificities,
+  Model = sprintf("Model 2 (AUC = %.2f)", auc_model2)
+)
+
+# Combine data for both models
+roc_data <- rbind(roc_data1, roc_data2)
+
+# Plot ROC curves using ggplot
+roc_plot <- ggplot(roc_data, aes(x = FPR, y = TPR, color = Model)) +
+  geom_line(size = 1.2) +
+  geom_abline(linetype = "dashed", color = "gray") +
+  labs(
+    title = "ROC Curves for Model 1 and Model 2",
+    x = "False Positive Rate (FPR)",
+    y = "True Positive Rate (TPR)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16),
+    axis.title = element_text(size = 14),
+    legend.position = "bottom"
+  )
+roc_plot
+```
 
 ### Model Comparisons Using ELPD
 
@@ -976,31 +1034,40 @@ loo2 <- loo::loo(model2)
 ```
 
 Pooled model:
+
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, comment="", fig.align='center'}
 loo1
 ```
+
 Hierarchical model:
+
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, comment="", fig.align='center'}
 loo2
 ```
+
+We have the following interpretation:
+
+  - If p_loo << p (the number of parameters), then the model is likely to be misspecified.
+  
+  - If p_loo < $\frac{p}{5}$, it is likely that the model is so flexible or the population prior is very weak.
+  
+  - If p_loo > p, then the model is likely to be badly misspecified.
+  
+The p_loo for pooled and hierarchical models are ~45 and ~64, respectively. These are slightly higher than the number of parameters of 40. This indicates that our models are likely to be misspecified and need further research and consideration.
+
+Then, I compare two models with LOO-CV. It appears that the pooled and hierarchical are not so different from each other.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, comment="", fig.align='center'}
 loo::loo_compare(loo2, loo1)
 ```
 
-
-The metric `se_diff` stands for the Standard Error of the Difference in ELPD between two models. It is used when comparing the ELPD of two different models to assess if the difference in their predictive performances is statistically significant. Since the ratio $\frac{se\_diff}{elpd\_diff}$ is quite large, this suggests that the different might not be statistically significant.
-
-While the ELPD estimation (scaled by standard error) of the pooled model yields a higher value than that of the
-hierarchical model (as indicated by a negative value of `elpd_diff`), this result might not be statistically significant due to the aforementioned reason. 
-
 Then we will plot the Pareto $\hat{k}$ values in order to assess the reliability of LOO approximation:
 
-  -   $\hat{k}$ $\leq$ 0.5 suggests high accuracy in estimating the corresponding LOO-CV component.
-    
-  -   0.5 \< $\hat{k}$ $\leq$  0.7 indicates lower but still acceptable accuracy.
-    
-  -   $\hat{k}$ $\geq$ 0.7 suggests that the PSIS-LOO approximation may not be reliable for that component/observation.
+-   $\hat{k}$ $\leq$ 0.5 suggests high accuracy in estimating the corresponding LOO-CV component.
+
+-   0.5 \< $\hat{k}$ $\leq$ 0.7 indicates lower but still acceptable accuracy.
+
+-   $\hat{k}$ $\geq$ 0.7 suggests that the PSIS-LOO approximation may not be reliable for that component/observation.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width='70%', fig.align='center'}
 pooled_k <- ggplot() +
@@ -1028,7 +1095,7 @@ While most of the Pareto $\hat{k}$ values for the Pooled model is below 0.5, the
 
 ## Prior Sensitivity Analysis
 
-In this section, we will inspect how the marginal posterior distributions of the parameters for the variables `Account_Balance` and `Value_Savings_Stocks` change when we adopt weakly informative priors $\beta_i \sim \mathcal{N}(0, 1)$ instead of the currently informative priors $\beta_i \sim \mathcal{N}(-1.5, 0.5)$. This is done by fitting another model with modification only in the prior settings.
+In this section, we will inspect how the marginal posterior distributions of the parameters for the variables `Account_Balance` and `Value_Savings_Stocks` change when we adopt weakly informative priors $\beta_i \sim \mathcal{N}(0, 10)$ instead of the currently informative priors $\beta_i \sim \mathcal{N}(-1.5, 0.5)$. This is done by fitting another model with modification only in the prior settings.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', fig.height=40, fig.width=15}
 library(ggplot2)
@@ -1100,7 +1167,7 @@ prior_compare <- function(model1, model2,type, pars) {
 
   scale=seq(-5, 5.5, by=0.1)
        
-  model1_prior <- tibble(x=scale, y=dnorm(scale, mean=0, sd=1))
+  model1_prior <- tibble(x=scale, y=dnorm(scale, mean=0, sd=10))
   model2_prior <- tibble(x=scale, y=dnorm(scale, mean=-1.5, sd=0.5))
 
   pooled_prior_comp <- ggplot() +
@@ -1109,7 +1176,7 @@ prior_compare <- function(model1, model2,type, pars) {
     geom_line(data=model2_prior, aes(x=x, y=y)) +
     geom_area(data=model2_prior, aes(x=x, y=y, fill="Alternative prior"), alpha=0.5) +
     scale_fill_manual(name="Priors", breaks=c("Original prior", "Alternative prior"), values=c("lightblue", "dodgerblue3")) +
-    labs(x=pars, y="density") 
+    labs(x=sprintf("%s (Prior)", pars), y="density") 
   
 
   pooled_posterior_comp <- ggplot() +
@@ -1122,21 +1189,20 @@ prior_compare <- function(model1, model2,type, pars) {
 }
 ```
 
-
 ### Pooled Logistics Regression models
 
 You can inspect the BRMS code for the alternative model [here](#pooled).
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 # Priors
-priors_model1_alt <- c(prior(normal(0, 1), class = "b"), 
-                       prior(normal(0, 1), class = "Intercept"))
+priors_model1_alt <- c(prior(normal(0, 10), class = "b"), 
+                       prior(normal(0, 10), class = "Intercept"))
 
 # Specify the Bayesian formula for the model
 model1_alt_form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit +
                         Purpose + Value_Savings_Stocks + Length_of_current_employment + 
                         Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-                        Concurrent_Credits + Type_of_apartment + PCA1 + Age_years)
+                        Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years)
 ```
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
@@ -1162,7 +1228,6 @@ model1_alt <- brm(
   cores=8)
 ```
 
-
 All the chains for this model have converged, and no divergence warning are given. By plotting the obtained posterior and the original posterior, we can analyse the discrepancies between them.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', out.width='70%'}
@@ -1181,7 +1246,7 @@ ggarrange(pooled_4, pooled_5, nrow = 1)
 ggarrange(pooled_6, pooled_7, nrow = 1)
 ```
 
-It is expected that the posteriors will be shifted away due to the change in location parameter from the prior. On the one hand, for the parameter `b_Account_BalanceNoaccount` and `b_Account_BalanceNoBalanceorDebit`, the shape of the posterior distributions do not change significantly. This suggests that these two parameters are quite robust to prior choices. On the other hand, for the rest of parameters, we can notice that there are noticeable changes in the resulting shape. To sum up, even though there are some trivial discrepancies, we can conclude that the Pooled model is robust to prior choices.
+It is expected that the posteriors will be shifted away due to the change in location parameter from the prior. On the one hand, for the parameter `b_Account_BalanceNoaccount` and `b_Account_BalanceNoBalanceorDebit`, the shape of the posterior distributions do not change significantly. This suggests that these two parameters are quite robust to prior choices. On the other hand, for the rest of parameters, we can notice that there are noticeable changes in the resulting shape.
 
 ### Hierarchical Logistic Regression model
 
@@ -1190,8 +1255,8 @@ You can inspect the BRMS code for the model [here](#hierarchical).
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 # Declare priors for the Hierarchical model
 # Priors for non-grouped parameters
-non_grouped_priors_model2_alt <- c(prior(normal(0, 1), class = "b"), 
-                       prior(normal(0, 1), class = "Intercept"))
+non_grouped_priors_model2_alt <- c(prior(normal(0, 10), class = "b"), 
+                       prior(normal(0, 10), class = "Intercept"))
 
 # Priors for grouped parameters
 grouped_priors_model2_alt <- c(prior(cauchy(0, 2), class = "sd"), # Prior for standard deviations of random effects
@@ -1204,7 +1269,7 @@ priors_model2_alt <- c(non_grouped_priors_model2_alt, grouped_priors_model2_alt)
 model2form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
           Purpose + Value_Savings_Stocks + Length_of_current_employment + 
           Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-          Concurrent_Credits + Type_of_apartment + PCA1 + Age_years + 
+          Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years + 
           (1 + Length_of_current_employment + Account_Balance + 
           Payment_Status_of_Previous_Credit | Occupation))
 ```
@@ -1231,7 +1296,6 @@ model2_alt <- brm(
   cores=8)
 ```
 
-
 All the chains for this model have converged, and no divergence warning are given. By plotting the obtained posterior and the original posterior, we can analyse the discrepancies between them.
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.align='center', out.width='70%'}
@@ -1250,8 +1314,7 @@ ggarrange(hier_4, hier_5, nrow = 1)
 ggarrange(hier_6, hier_7, nrow = 1)
 ```
 
-For the Hierarchical model, even with a significantly more informative prior used, there is no substantial change in the shape of the posterior distribution but only minor changes in the location. Therefore, it can be concluded that the Hierarchical model is quite robust to prior changes.
-
+For the Hierarchical model, even with a significantly more informative prior used, there is no substantial change in the shape of the posterior distribution but only minor changes in the location.
 
 # Conclusion and potential improvements
 
@@ -1271,13 +1334,13 @@ Future research should focus on integrating emerging socio-economic variables, e
 
 As the dataset suffers from the from the under-representation of some classes in some features, we can balance the dataset by keeping the data minority class and decreasing the size of the majority class. This technique is called undersampling. This way, we can extract more precise insights from the originally imbalanced dataset.
 
-Another way to improve the project is to add a Receiver operating characteristics curve (ROC curve). This curve helps us understand how the predictive performance of this binary classification model changes when we change the threshold value by plotting True positive rate (TPR) against the False positive rate (FPR) at each threshold setting. 
-
+Last but not least, we can also aggregate all information from all categorical variables without having to suffer from the curse of dimensionality by employing Multiple Correspondence Analysis. By this way, we can construct Principal Components and those which explain the variance best as features for our model.
 
 # Self-reflection
 
 This project helps me familiarize myself with the workflow of Bayesian inference. I had to come up with an idea, find the appropriate data, build a model, as well as familiarize with the background. I chose this topic because I have a minor in Business Analytics and I have a special interest in Quantitative Methods that can be applied in Finance and Business context. In overall, this project gives me a chance to hone my skills in time management, task management, problem-solving, as well as technical knowledge such as programming and statistics. I am pretty much content with invaluable learning outcome from this work.
 
+\newpage
 
 # Appendices and References
 
@@ -1287,11 +1350,11 @@ This project helps me familiarize myself with the workflow of Bayesian inference
 
 **Model with Original Priors**:
 
-```{r, eval=FALSE, message=FALSE, warning=FALSE}
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 # Priors
 priors_model1 <- c(
-  prior(normal(0, 1), class = "b"), 
-  prior(normal(0, 1), class = "Intercept"),
+  prior(normal(0, 10), class = "b"), 
+  prior(normal(0, 10), class = "Intercept"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_Balance0M200DM"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoaccount"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoBalanceorDebit"),
@@ -1304,7 +1367,7 @@ priors_model1 <- c(
 model1form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
                    Purpose + Value_Savings_Stocks + Length_of_current_employment + 
                    Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-                   Concurrent_Credits + Type_of_apartment + PCA1 + Age_years)
+                   Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years)
 ```
 
 ```{r, eval=FALSE, message=FALSE, warning=FALSE}
@@ -1334,14 +1397,14 @@ model1 <- brm(
 
 ```{r, eval=FALSE, message=FALSE, warning=FALSE}
 # Priors
-priors_model1_alt <- c(prior(normal(0, 1), class = "b"), 
-                       prior(normal(0, 1), class = "Intercept"))
+priors_model1_alt <- c(prior(normal(0, 10), class = "b"), 
+                       prior(normal(0, 10), class = "Intercept"))
 
 # Specify the Bayesian formula for the model
 model1_alt_form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit +
                         Purpose + Value_Savings_Stocks + Length_of_current_employment + 
                         Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-                        Concurrent_Credits + Type_of_apartment + PCA1 + Age_years)
+                        Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years)
 ```
 
 ```{r, eval=FALSE, message=FALSE, warning=FALSE}
@@ -1367,7 +1430,6 @@ model1_alt <- brm(
   cores=8)
 ```
 
-
 ### Hierarchical Logistic Regression Model {#hierarchical}
 
 **Model with Original Priors**:
@@ -1376,8 +1438,8 @@ model1_alt <- brm(
 # Declare priors for the Hierarchiccal model
 # Priors for non-grouped parameters
 non_grouped_priors_model2 <- c(
-  prior(normal(0, 1), class = "b"), 
-  prior(normal(0, 1), class = "Intercept"),
+  prior(normal(0, 10), class = "b"), 
+  prior(normal(0, 10), class = "Intercept"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_Balance0M200DM"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoaccount"),
   prior(normal(-1.5, 0.5), class = "b", coef = "Account_BalanceNoBalanceorDebit"),
@@ -1402,12 +1464,11 @@ priors_model2 <- c(non_grouped_priors_model2, grouped_priors_model2)
 model2form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
           Purpose + Value_Savings_Stocks + Length_of_current_employment + 
           Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-          Concurrent_Credits + Type_of_apartment + PCA1 + Age_years + 
+          Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years + 
           (1 + Length_of_current_employment + Account_Balance + 
           Payment_Status_of_Previous_Credit | Occupation))
 
 ```
-
 
 ```{r, eval=FALSE, message=FALSE, warning=FALSE}
 model2 <- brm(
@@ -1436,12 +1497,15 @@ model2 <- brm(
 ```{r, eval=FALSE, message=FALSE, warning=FALSE}
 # Declare priors for the Hierarchical model
 # Priors for non-grouped parameters
-non_grouped_priors_model2_alt <- c(prior(normal(0, 1), class = "b"), 
-                       prior(normal(0, 1), class = "Intercept"))
+non_grouped_priors_model2_alt <- c(prior(normal(0, 10), class = "b"), 
+                       prior(normal(0, 10), class = "Intercept"))
 
 # Priors for grouped parameters
-grouped_priors_model2_alt <- c(prior(cauchy(0, 2), class = "sd"), # Prior for standard deviations of random effects
-                       prior(lkj(2), class = "cor")) # Prior for the correlation matrix of random effects
+grouped_priors_model2_alt <- c(
+  # Prior for standard deviations of random effects
+  prior(cauchy(0, 2), class = "sd"), 
+  # Prior for the correlation matrix of random effects
+  prior(lkj(2), class = "cor")) 
 
 # Concatenate two parts into a complete set of priors
 priors_model2_alt <- c(non_grouped_priors_model2_alt, grouped_priors_model2_alt)
@@ -1450,7 +1514,7 @@ priors_model2_alt <- c(non_grouped_priors_model2_alt, grouped_priors_model2_alt)
 model2form <- bf(Creditability ~ 1 + Account_Balance + Payment_Status_of_Previous_Credit + 
           Purpose + Value_Savings_Stocks + Length_of_current_employment + 
           Sex_Marital_Status + Guarantors + Most_valuable_available_asset + 
-          Concurrent_Credits + Type_of_apartment + PCA1 + Age_years + 
+          Concurrent_Credits + Type_of_apartment + Duration_of_Credit_monthly + Credit_Amount + Age_years + 
           (1 + Length_of_current_employment + Account_Balance + 
           Payment_Status_of_Previous_Credit | Occupation))
 ```
@@ -1477,10 +1541,10 @@ model2_alt <- brm(
   cores=8)
 ```
 
-## References
+## References {#references}
 
-Frost, J. (2017) Multicollinearity in regression analysis: Problems, detection, and solutions, Statistics By Jim. Available at: https://statisticsbyjim.com/regression/multicollinearity-in-regression-analysis/#comments (Accessed: 13 January 2024). 
+Frost, J. (2017) Multicollinearity in regression analysis: Problems, detection, and solutions, Statistics By Jim. Available at: <https://statisticsbyjim.com/regression/multicollinearity-in-regression-analysis/#comments> (Accessed: 13 January 2024).
 
 Vehtari, Aki, Andrew Gelman, Daniel Simpson, Bob Carpenter, and Paul-Christian Bürkner. 2021. "Rank-Normalization, Folding, and Localization: An Improved $\widehat{R}$ for Assessing Convergence of Mcmc." Bayesian Analysis. <https://doi.org/10.1214/20-BA1221>.
 
-Treece, K. (2023) Understand the 5 C’s of credit before applying for a loan, Forbes. Available at: https://www.forbes.com/advisor/credit-score/5-cs-of-credit/ (Accessed: 14 January 2024). 
+Treece, K. (2023) Understand the 5 C’s of credit before applying for a loan, Forbes. Available at: <https://www.forbes.com/advisor/credit-score/5-cs-of-credit/> (Accessed: 14 January 2024).
